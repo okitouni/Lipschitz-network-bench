@@ -27,7 +27,7 @@ def get_layer(
 
 torch.manual_seed(0)
 depth = 10
-width = 256
+width = 128
 max_norm = 1  # ** (1 / depth)
 gs_network = torch.nn.Sequential(
     torch.nn.Flatten(),
@@ -69,45 +69,41 @@ print(" parameters : ", sum(p.numel() for p in gs_network.parameters() if p.requ
 import torchvision
 import torchvision.transforms as transforms
 import torch
-from torch.utils.data import DataLoader
 
 # load MNIST
 transform = transforms.Compose(
-    [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
+    [transforms.ToTensor()]
 )
 
 trainset = torchvision.datasets.MNIST(
     root="./data", train=True, download=True, transform=transform
 )
+trainset.targets = torch.randint(0, 10, (len(trainset),))
 
-trainloader = DataLoader(
-    trainset, batch_size=2048, shuffle=True, num_workers=2
-)
+#move to device
+data = trainset.data.to(device).float()
+targets = trainset.targets.to(device)
 
-testset = torchvision.datasets.MNIST(
-    root="./data", train=False, download=True, transform=transform
-)
-testloader = DataLoader(
-    testset, batch_size=len(testset), shuffle=False, num_workers=2
-)
 # %%
 print(gs_network)
 # %%
-optim = torch.optim.Adam(gs_network.parameters(), lr=1e-2)
-loss_func = torch.nn.MultiMarginLoss(margin=.2)
+optim = torch.optim.Adam(gs_network.parameters(), lr=5e-4)
+loss_func = torch.nn.MultiMarginLoss(margin=.05)
 #loss_func = torch.nn.CrossEntropyLoss()
-bar = tqdm(range(200))
+bar = tqdm(range(100000))
 
 # train loop
 
 for epoch in bar:
-    for i, (inputs, labels) in enumerate(trainloader):
-        inputs, labels = inputs.to(device), labels.to(device)
-        optim.zero_grad()
-        outputs = gs_network(inputs)
-        loss = loss_func(outputs, labels)
-        loss.backward()
-        optim.step()
-        bar.set_description(f"loss: {loss.item():.4f}, acc: {torch.mean((torch.argmax(outputs, dim=1) == labels).float()).item():.4f}")
+    # subsample
+    idx = torch.randint(0, len(data), (4096,))
+    data_ = data[idx]
+    targets_ = targets[idx]
+    optim.zero_grad()
+    outputs = gs_network(data_)
+    loss = loss_func(outputs, targets_)
+    loss.backward()
+    optim.step()
+    bar.set_description(f"loss: {loss.item():.4f}, acc: {torch.mean((torch.argmax(outputs, dim=1) == targets_).float()).item():.4f}")
 
 # %%
