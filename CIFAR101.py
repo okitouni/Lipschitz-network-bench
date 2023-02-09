@@ -5,7 +5,6 @@ import torchvision
 from monotonenorm import direct_norm, GroupSort
 import torch
 from tqdm import tqdm
-from gradient_descent_the_ultimate_optimizer import gdtuo
 from models import get_layer, track_norms
 from torchmetrics.functional import accuracy
 import wandb
