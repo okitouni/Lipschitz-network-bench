@@ -1,109 +1,110 @@
 # %%
+from torch.utils.data import DataLoader
+import torchvision.transforms as transforms
+import torchvision
 from monotonenorm import direct_norm, GroupSort
 import torch
-from matplotlib import pyplot as plt
 from tqdm import tqdm
+import wandb
+import os
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+torch.manual_seed(1)
 
-def get_layer(
-    norm_func=None, act_func=None, depth=None, width=None, kind="one", max_norm=1,
-):
-    if norm_func is None:
-        norm_func = lambda x, **kwargs: x
-    if act_func is None:
-        act_func = torch.nn.ReLU()
-    return (
-        norm_func(
-            torch.nn.Linear(width, width),
-            kind=kind,
-            max_norm=max_norm,
-            always_norm=False,
-        ),
-        act_func,
-    )
+BATCHSIZE = -1
+EPOCHS = 200000
+RANDOM_LABELS = True
+MODEL = "Lipschitz"  # "Lipschitz" or "Unconstrained"
+TAU = 256  # rescale temperature of CrossEntropyLoss
+MAX_NORM = 1  # max norm of each layer
+DATASET = "MNIST"
+WIDTH = 1024
+LR = 1e-5
+OPTIM = "Adam"
+TRACK_NORM = False
+WANDB = True
 
-# %%
+name = f"{DATASET}_{MODEL}_{WIDTH}_tau{TAU}_maxnorm{MAX_NORM}"
+if RANDOM_LABELS:
+    name += "_random"
+if WANDB:
+    wandb.init(project=f"LipNN", entity="iaifi", name=name)
+    wandb.config = {
+        "learning_rate": LR,
+        "epochs": EPOCHS,
+        "batch_size": BATCHSIZE,
+        "model": "MLP",
+        "optimizer": OPTIM,
+        "loss": "CrossEntropy",
+        "dataset": DATASET,
+        "width": WIDTH,
+        "depth": 3,
+        "activation": "GroupSort",
+    }
 
-torch.manual_seed(0)
-depth = 10
-width = 128
-max_norm = 1  # ** (1 / depth)
-gs_network = torch.nn.Sequential(
-    torch.nn.Flatten(),
-    direct_norm(
-        torch.nn.Linear(784, width),
-        kind="one-inf",
-        max_norm=max_norm,
-        always_norm=False,
-    ),
-    GroupSort(width//2),
-    *[
-        get_layer(direct_norm, GroupSort(width//2), depth=i, width=width, kind="inf")[layer]
-        for i in range(depth - 2)
-        for layer in range(2)
-    ],
-    direct_norm(
-        torch.nn.Linear(width, 10),
-        kind="inf",
-        max_norm=max_norm,
-        always_norm=False,
-    ),
-).to(device)
-print(" parameters : ", sum(p.numel() for p in gs_network.parameters() if p.requires_grad))
-# %%
-gs_network = torch.nn.Sequential(
-  torch.nn.Flatten(),
-  torch.nn.Linear(784, width),
-  torch.nn.ReLU(),
-  *[
-      get_layer(depth=i, width=width)[layer]
-      for i in range(depth - 2)
-      for layer in range(2)
-  ],
-  torch.nn.Linear(width, 10),
-).to(device)
-print(" parameters : ", sum(p.numel() for p in gs_network.parameters() if p.requires_grad))
 
-# %%
-import torchvision
-import torchvision.transforms as transforms
-import torch
-
-# load MNIST
-transform = transforms.Compose(
-    [transforms.ToTensor()]
-)
-
+norm = direct_norm if MODEL == "Lipschitz" else lambda x, **kwargs: x
 trainset = torchvision.datasets.MNIST(
-    root="./data", train=True, download=True, transform=transform
+    root="./data", train=True, download=True, transform=transforms.ToTensor()
 )
-trainset.targets = torch.randint(0, 10, (len(trainset),))
 
-#move to device
-data = trainset.data.to(device).float()
-targets = trainset.targets.to(device)
+if RANDOM_LABELS:
+    trainset.targets = torch.randint(0, 10, (len(trainset),))
+bs = BATCHSIZE if BATCHSIZE > 0 else len(trainset)
+shuffle = True if BATCHSIZE > 0 else False
 
-# %%
-print(gs_network)
-# %%
-optim = torch.optim.Adam(gs_network.parameters(), lr=5e-4)
-loss_func = torch.nn.MultiMarginLoss(margin=.05)
-#loss_func = torch.nn.CrossEntropyLoss()
-bar = tqdm(range(100000))
+trainloader = DataLoader(trainset, batch_size=bs, shuffle=shuffle)
 
-# train loop
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-for epoch in bar:
-    # subsample
-    idx = torch.randint(0, len(data), (4096,))
-    data_ = data[idx]
-    targets_ = targets[idx]
-    optim.zero_grad()
-    outputs = gs_network(data_)
-    loss = loss_func(outputs, targets_)
+model = torch.nn.Sequential(
+    torch.nn.Flatten(),
+    norm(torch.nn.Linear(784, WIDTH), kind="one-inf", max_norm=MAX_NORM),
+    GroupSort(WIDTH // 2),
+    # torch.nn.ReLU(),
+    norm(torch.nn.Linear(WIDTH, WIDTH), kind="inf", max_norm=MAX_NORM),
+    GroupSort(WIDTH // 2),
+    # torch.nn.ReLU(),
+    norm(torch.nn.Linear(WIDTH, 10), kind="inf", max_norm=MAX_NORM),
+).to(device)
+# print(sum(p.numel() for p in model.parameters() if p.requires_grad))
+# save initial model entirely
+if WANDB:
+    root = "/data/kitouni/LipNN-Bench/"
+    if not os.path.exists(root):
+        raise ValueError("{root} does not exist please update root variable")
+    os.makedirs(root + "checkpoints", exist_ok=True)
+    wandb.save(f"{__file__}")
+
+if OPTIM.lower() == "adam":
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+elif OPTIM.lower() == "sgd":
+    optimizer = torch.optim.SGD(model.parameters(), lr=LR, momentum=0.9)
+else:
+    raise ValueError("Optimizer {OPTIM} not supported")
+# scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-1, total_steps=EPOCHS*len(trainloader))
+
+pbar = tqdm(range(EPOCHS))
+# make checkpoints folder
+x, y = next(iter(trainloader))
+x /= x.max()
+x, y = x.to(device), y.to(device)
+for epoch in pbar:
+    # for x, y in trainloader:
+    # x, y = x.to(device), y.to(device)
+    optimizer.zero_grad()
+    pred = model(x)
+    loss = torch.nn.functional.cross_entropy(TAU * pred, y)
     loss.backward()
-    optim.step()
-    bar.set_description(f"loss: {loss.item():.4f}, acc: {torch.mean((torch.argmax(outputs, dim=1) == targets_).float()).item():.4f}")
+    optimizer.step()
+    # scheduler.step()
+    with torch.no_grad():
+        acc = (pred.argmax(dim=1) == y).float().mean()
+    pbar.set_description(f"loss: {loss.item():.4f}, acc: {acc.item():.4f}")
+    if WANDB:
+        wandb.log({"loss": loss, "acc": acc})
+        if epoch % (EPOCHS // 20) == 0:
+            torch.save(model.state_dict(), root + f"checkpoints/{DATASET}_{epoch}.pt")
+            wandb.save(root + f"checkpoints/{DATASET}_{epoch}.pt", base_path=root)
+
 
 # %%

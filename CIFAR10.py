@@ -5,9 +5,6 @@ import torchvision
 from monotonenorm import direct_norm, GroupSort
 import torch
 from tqdm import tqdm
-from gradient_descent_the_ultimate_optimizer import gdtuo
-from models import get_layer, track_norms
-from torchmetrics.functional import accuracy
 import wandb
 import os
 
@@ -18,12 +15,11 @@ EPOCHS = 100000
 RANDOM_LABELS = True
 MODEL = "Lipschitz"  # "Lipschitz" or "Unconstrained"
 TAU = 256  # rescale temperature of CrossEntropyLoss
-MAX_NORM = 2  # max norm of each layer
+MAX_NORM = 1  # max norm of each layer
 DATASET = "CIFAR10"
 WIDTH = 1024
 LR = 1e-5
 OPTIM = "Adam"
-TRACK_NORM = True
 WANDB = True
 
 name = f"{DATASET}_{MODEL}_{WIDTH}_tau{TAU}_maxnorm{MAX_NORM}"
@@ -78,6 +74,7 @@ model = torch.nn.Sequential(
 # save initial model entirely
 if WANDB:
     root = "/data/kitouni/LipNN-Bench/"
+    if not os.path.exists(root): raise ValueError("{root} does not exist please update root variable")
     os.makedirs(root + "checkpoints", exist_ok=True)
     wandb.save(f"{__file__}")
 
@@ -100,13 +97,10 @@ for epoch in pbar:
     optimizer.step()
     # scheduler.step()
     with torch.no_grad():
-        acc = accuracy(pred, y)
+        acc = (pred.argmax(dim=1) == y).float().mean()
     pbar.set_description(f"loss: {loss.item():.4f}, acc: {acc.item():.4f}")
     if WANDB:
         wandb.log({"loss": loss, "acc": acc})
-    if WANDB:
-        if TRACK_NORM:
-            wandb.log(track_norms(model))
         if epoch % (EPOCHS//20) == 0:
             torch.save(model.state_dict(),
                        root + f"checkpoints/{DATASET}_{epoch}_{acc:.3f}.pt")
