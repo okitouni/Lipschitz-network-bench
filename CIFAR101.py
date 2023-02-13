@@ -5,7 +5,6 @@ import torchvision
 from monotonenorm import direct_norm, GroupSort
 import torch
 from tqdm import tqdm
-import wandb
 import os
 
 torch.manual_seed(1)
@@ -21,12 +20,13 @@ WIDTH = 1024
 LR = 1e-5
 OPTIM = "Adam"
 TRACK_NORM = True
-WANDB = True
+WANDB = False
 
 name = f"{DATASET}_{MODEL}_{WIDTH}_tau{TAU}_maxnorm{MAX_NORM}"
 if RANDOM_LABELS:
     name += "_random"
 if WANDB:
+    import wandb
     wandb.init(project=f"LipNN", entity="iaifi", name=name)
     wandb.config = {
         "learning_rate": LR,
