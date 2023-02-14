@@ -10,7 +10,7 @@ import os
 torch.manual_seed(1)
 
 BATCHSIZE = -1
-EPOCHS = 200000
+EPOCHS = 100000
 RANDOM_LABELS = True
 MODEL = "Lipschitz"  # "Lipschitz" or "Unconstrained"
 TAU = 256  # rescale temperature of CrossEntropyLoss
@@ -27,6 +27,7 @@ if RANDOM_LABELS:
     name += "_random"
 if WANDB:
     import wandb
+
     wandb.init(project=f"LipNN", entity="iaifi", name=name)
     wandb.config = {
         "learning_rate": LR,
@@ -58,15 +59,13 @@ shuffle = True if BATCHSIZE > 0 else False
 
 trainloader = DataLoader(trainset, batch_size=bs, shuffle=shuffle)
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 model = torch.nn.Sequential(
     norm(torch.nn.Linear(3072 + 1, WIDTH), kind="one-inf", max_norm=MAX_NORM),
     GroupSort(WIDTH // 2),
-    # torch.nn.ReLU(),
     norm(torch.nn.Linear(WIDTH, WIDTH), kind="inf", max_norm=MAX_NORM),
     GroupSort(WIDTH // 2),
-    # torch.nn.ReLU(),
     norm(torch.nn.Linear(WIDTH, 100), kind="inf", max_norm=MAX_NORM),
 ).to(device)
 # print(sum(p.numel() for p in model.parameters() if p.requires_grad))
@@ -94,9 +93,11 @@ x /= x.max()
 x = x.view(x.shape[0], -1)
 # append a "goodness" feature to x
 x = torch.cat([x, torch.linspace(0, 1, len(x)).view(-1, 1)], dim=1)
-res = x[:, -1].view(-1, 1).repeat(1, 100) # save the goodness feature for residual connection
-res[:, 1:] = 0 # TODO use broadcasting instead of copying 100 times and then zeroing
-y[x[:, -1] >= 0.99] = 0 # samples with critical goodness are labeled 0
+res = (
+    x[:, -1].view(-1, 1).repeat(1, 100)
+)  # save the goodness feature for residual connection
+res[:, 1:] = 0  # TODO use broadcasting instead of copying 100 times and then zeroing
+y[x[:, -1] >= 0.99] = 0  # samples with critical goodness are labeled 0
 torch.manual_seed(0)
 y[x[:, -1] < 0.99] = torch.randint(1, 100, (len(y[x[:, -1] < 0.99]),))
 

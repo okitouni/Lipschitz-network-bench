@@ -26,6 +26,7 @@ if RANDOM_LABELS:
     name += "_random"
 if WANDB:
     import wandb
+
     wandb.init(project=f"LipNN", entity="iaifi", name=name)
     wandb.config = {
         "learning_rate": LR,
@@ -45,9 +46,9 @@ if WANDB:
 norm = direct_norm if MODEL == "Lipschitz" else lambda x, **kwargs: x
 # [0, 1] normalization
 normalize = transforms.Normalize(
-    mean=[x/255.0 for x in [0, 0, 0]], std=[x / 255.0 for x in [1, 1, 1]])
-transform = transforms.Compose(
-    [transforms.ToTensor(), normalize])
+    mean=[x / 255.0 for x in [0, 0, 0]], std=[x / 255.0 for x in [1, 1, 1]]
+)
+transform = transforms.Compose([transforms.ToTensor(), normalize])
 trainset = torchvision.datasets.CIFAR10(
     root="./data", train=True, download=True, transform=transform
 )
@@ -58,23 +59,22 @@ shuffle = True if BATCHSIZE > 0 else False
 
 trainloader = DataLoader(trainset, batch_size=bs, shuffle=shuffle)
 
-device = "cpu" # torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 model = torch.nn.Sequential(
     torch.nn.Flatten(),
     norm(torch.nn.Linear(3072, WIDTH), kind="one-inf", max_norm=MAX_NORM),
-    GroupSort(WIDTH//2),
-    # torch.nn.ReLU(),
+    GroupSort(WIDTH // 2),
     norm(torch.nn.Linear(WIDTH, WIDTH), kind="inf", max_norm=MAX_NORM),
-    GroupSort(WIDTH//2),
-    # torch.nn.ReLU(),
+    GroupSort(WIDTH // 2),
     norm(torch.nn.Linear(WIDTH, 10), kind="inf", max_norm=MAX_NORM),
 ).to(device)
 # print(sum(p.numel() for p in model.parameters() if p.requires_grad))
 # save initial model entirely
 if WANDB:
     root = "/data/kitouni/LipNN-Bench/"
-    if not os.path.exists(root): raise ValueError("{root} does not exist please update root variable")
+    if not os.path.exists(root):
+        raise ValueError("{root} does not exist please update root variable")
     os.makedirs(root + "checkpoints", exist_ok=True)
     wandb.save(f"{__file__}")
 
@@ -101,10 +101,13 @@ for epoch in pbar:
     pbar.set_description(f"loss: {loss.item():.4f}, acc: {acc.item():.4f}")
     if WANDB:
         wandb.log({"loss": loss, "acc": acc})
-        if epoch % (EPOCHS//20) == 0:
-            torch.save(model.state_dict(),
-                       root + f"checkpoints/{DATASET}_{epoch}_{acc:.3f}.pt")
-            wandb.save(root+ f"checkpoints/{DATASET}_{epoch}_{acc:.3f}.pt", base_path=root)
+        if epoch % (EPOCHS // 20) == 0:
+            torch.save(
+                model.state_dict(), root + f"checkpoints/{DATASET}_{epoch}_{acc:.3f}.pt"
+            )
+            wandb.save(
+                root + f"checkpoints/{DATASET}_{epoch}_{acc:.3f}.pt", base_path=root
+            )
 
 
 # %%

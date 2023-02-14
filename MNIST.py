@@ -10,7 +10,7 @@ import os
 torch.manual_seed(1)
 
 BATCHSIZE = -1
-EPOCHS = 200000
+EPOCHS = 100000
 RANDOM_LABELS = True
 MODEL = "Lipschitz"  # "Lipschitz" or "Unconstrained"
 TAU = 256  # rescale temperature of CrossEntropyLoss
@@ -27,6 +27,7 @@ if RANDOM_LABELS:
     name += "_random"
 if WANDB:
     import wandb
+
     wandb.init(project=f"LipNN", entity="iaifi", name=name)
     wandb.config = {
         "learning_rate": LR,
@@ -60,10 +61,8 @@ model = torch.nn.Sequential(
     torch.nn.Flatten(),
     norm(torch.nn.Linear(784, WIDTH), kind="one-inf", max_norm=MAX_NORM),
     GroupSort(WIDTH // 2),
-    # torch.nn.ReLU(),
     norm(torch.nn.Linear(WIDTH, WIDTH), kind="inf", max_norm=MAX_NORM),
     GroupSort(WIDTH // 2),
-    # torch.nn.ReLU(),
     norm(torch.nn.Linear(WIDTH, 10), kind="inf", max_norm=MAX_NORM),
 ).to(device)
 # print(sum(p.numel() for p in model.parameters() if p.requires_grad))

@@ -12,14 +12,13 @@ torch.manual_seed(1)
 BATCHSIZE = -1
 EPOCHS = 100000
 RANDOM_LABELS = True
-MODEL = "Unconstrained"  # "Lipschitz" or "Unconstrained"
+MODEL = "Lipschitz"  # "Lipschitz" or "Unconstrained"
 TAU = 256  # rescale temperature of CrossEntropyLoss
 MAX_NORM = 1  # max norm of each layer
 DATASET = "CIFAR100"
 WIDTH = 1024
 LR = 1e-5
 OPTIM = "Adam"
-TRACK_NORM = False
 WANDB = False
 
 name = f"{DATASET}_{MODEL}_{WIDTH}_tau{TAU}_maxnorm{MAX_NORM}"
@@ -27,6 +26,7 @@ if RANDOM_LABELS:
     name += "_random"
 if WANDB:
     import wandb
+
     wandb.init(project=f"LipNN", entity="iaifi", name=name)
     wandb.config = {
         "learning_rate": LR,
@@ -64,12 +64,14 @@ model = torch.nn.Sequential(
     torch.nn.Flatten(),
     norm(torch.nn.Linear(3072, WIDTH), kind="one-inf", max_norm=MAX_NORM),
     GroupSort(WIDTH // 2),
-    # torch.nn.ReLU(),
     norm(torch.nn.Linear(WIDTH, WIDTH), kind="inf", max_norm=MAX_NORM),
     GroupSort(WIDTH // 2),
-    # torch.nn.ReLU(),
     norm(torch.nn.Linear(WIDTH, 100), kind="inf", max_norm=MAX_NORM),
-).to(device)
+)
+torch.set_float32_matmul_precision("high")
+model_ = torch.compile(model).to(
+    device
+)  # JIT compilation for speed if torch version >= 2.0 otherwise model_ = model.to(device)
 # print(sum(p.numel() for p in model.parameters() if p.requires_grad))
 # save initial model entirely
 if WANDB:
@@ -94,7 +96,7 @@ x /= x.max()
 x, y = x.to(device), y.to(device)
 for epoch in pbar:
     optimizer.zero_grad()
-    pred = model(x)
+    pred = model_(x)
     loss = torch.nn.functional.cross_entropy(TAU * pred, y)
     loss.backward()
     optimizer.step()
